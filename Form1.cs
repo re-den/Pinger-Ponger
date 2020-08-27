@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
@@ -172,6 +173,28 @@ namespace WindowsFormsApp3
         private void textBox1_TextChanged(object sender, EventArgs e)
         {
 
+        }
+
+        [DllImport("iphlpapi.dll", ExactSpelling = true)]
+        public static extern int SendARP(int DestinationIP, int SourceIP, [Out] byte[] pMacAddr, ref int PhyAddrLen);
+
+        public static string ConvertIpToMAC(IPAddress ip)
+        {
+            byte[] addr = new byte[6];
+            int length = addr.Length;
+
+            SendARP(ip.GetHashCode(), 0, addr, ref length);
+
+            return BitConverter.ToString(addr, 0, 6);
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            //string name = Dns.GetHostEntry(Dns.GetHostName());
+
+            IPAddress IP = IPAddress.Parse("192.168.1.104");
+
+            textBox2.Text=ConvertIpToMAC(IP);
         }
     }
 }
