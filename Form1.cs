@@ -1,24 +1,31 @@
-﻿using System;
+﻿using Pinger;
+using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 
 namespace WindowsFormsApp3
 {
+
     public partial class Form1 : Form
     {
+
         public Form1()
         {
             InitializeComponent();
             //chart1.Series[0].ChartType = System.Windows.Forms.DataVisualization.Charting.SeriesChartType.Spline;
-            timer1_Tick(null,null);
+            timer1_Tick(null, null);
         }
 
+
         bool enableTimer = false;
+
 
         private void button1_Click(object sender, EventArgs e)
         {
@@ -29,65 +36,86 @@ namespace WindowsFormsApp3
                 chart1.Series[1].Points.Clear();
                 maximum = maximum_eff = 0;
                 minimum = minimum_eff = 10000;
-                average = average_eff = 0;
-                count = count_eff = 1;
+                average = average_eff = average_ping1 = average_ping2 = 0;
+                button1.Text = "Остановить";
+
+                count = count_eff = 0;
                 textBox1.Enabled = textBox3.Enabled = false;
             }
             else
             {
                 timer1.Stop();
                 textBox1.Enabled = textBox3.Enabled = true;
+                button1.Text = "Запустить";
             }
             enableTimer = !enableTimer;
 
         }
 
-        private long Ping_Srv(string address)
-        {
-            long PingResult;
-            try
-            {
-                Ping ping = new Ping();
-                PingReply reply = ping.Send(address, 10000);
-                PingResult = reply.RoundtripTime;
-            }
-            catch (Exception)
-            {
-                PingResult = -1;
-            }
-            return PingResult;
-        }
-        public int count = 1;
-        public int count_eff = 1;
+
+        public int count = 0;
+        public int count_eff = 0;
         public long average;
-        public long minimum=10000;
+        public long minimum = 10000;
         public long maximum;
         public long average_eff;
         public long minimum_eff = 10000;
         public long maximum_eff;
+        public long average_ping1 = 0;
+        public long average_ping2 = 0;
+        public int period;
+
+        private long moving_avg(long ma, long pingResult, int count)
+        {
+            ma = ma * (count / (count + 1)) + pingResult / (count + 1);
+            
+            return ma;
+        }
+
         private void timer1_Tick(object sender, EventArgs e)
         {
-            long Result = Ping_Srv(textBox1.Text);
+            nt first = new nt();
+            long Result = first.ping(textBox1.Text);
+
+            if (period != 0)
+                if (chart1.Series[0].Points.Count > period/numericUpDown1.Value)
+                    chart1.Series[0].Points.RemoveAt(0);    
+            
             chart1.Series[0].Points.AddXY(DateTime.Now.ToString("HH:mm:ss"), Result);
+
             if (Result > maximum)
                 maximum = Result;
             if (Result < minimum)
                 minimum = Result;
-            average = (average + Result) / 2;
+            //average = moving_avg(average,Result,count);
             count++;
+            average_ping1 += Result;
+            average = average_ping1 / count;
+
+
             label3.Text = count.ToString();
-            //label2.Text = "Всего пакетов " + textBox1.Text;
+
             chart1.Series[0].LegendText = textBox1.Text;
             label1.Text = $"Текущее:{Result}  Min:{minimum}  Среднее:{average}  Макс:{maximum}";
 
-            long Result_eff = Ping_Srv(textBox3.Text);
+            long Result_eff = first.ping(textBox3.Text);
+
+            if (period!=0)
+                if (chart1.Series[1].Points.Count > period / numericUpDown1.Value)
+                    chart1.Series[1].Points.RemoveAt(0);
+
             chart1.Series[1].Points.AddXY(DateTime.Now.ToString("HH:mm:ss"), Result_eff);
+
             if (Result_eff > maximum_eff)
                 maximum_eff = Result_eff;
             if (Result_eff < minimum_eff)
                 minimum_eff = Result_eff;
-            average = (average_eff + Result_eff) / 2;
+
             count_eff++;
+            average_ping2 += Result_eff;
+            average_eff = average_ping2 / count_eff;
+
+
             label4.Text = count_eff.ToString();
             //label2.Text = "Всего пакетов " + textBox3.Text;
             chart1.Series[1].LegendText = textBox3.Text;
@@ -95,7 +123,7 @@ namespace WindowsFormsApp3
 
             if (checkBox1.Checked)
             {
-                LogWrite($"{Application.StartupPath}/{DateTime.Now:yyyyMMdd}-{textBox1.Text}.log",$"{count};{textBox1.Text};{Result};{minimum};{maximum}");            
+                LogWrite($"{Application.StartupPath}/{DateTime.Now:yyyyMMdd}-{textBox1.Text}.log", $"{count};{textBox1.Text};{Result};{minimum};{maximum}");
                 LogWrite($"{Application.StartupPath}/{DateTime.Now:yyyyMMdd}-{textBox3.Text}.log", $"{count_eff};{textBox3.Text};{Result_eff};{minimum_eff};{maximum_eff}");
             }
         }
@@ -122,52 +150,15 @@ namespace WindowsFormsApp3
         private void button2_Click(object sender, EventArgs e)
         {
             textBox2.Clear();
-            textBox2.Text=Traceroute(textBox1.Text);
+            nt tracer = new nt();
+            textBox2.Text = tracer.tracert(textBox1.Text);
         }
 
         private void button3_Click(object sender, EventArgs e)
         {
             textBox2.Clear();
-            textBox2.Text = Traceroute(textBox3.Text);
-        }
-
-        public string Traceroute(string ipAddressOrHostName)
-        {
-            Cursor = Cursors.WaitCursor;
-            IPAddress ipAddress = Dns.GetHostEntry(ipAddressOrHostName).AddressList[0];
-            StringBuilder traceResults = new StringBuilder();
-            using (Ping pingSender = new Ping())
-            {
-                PingOptions pingOptions = new PingOptions();
-                Stopwatch stopWatch = new Stopwatch();
-                byte[] bytes = new byte[32];
-                pingOptions.DontFragment = true;
-                pingOptions.Ttl = 1;
-                int maxHops = 30;
-                traceResults.AppendLine($"Начало трассировки: {DateTime.Now:HH:mm:ss}{Environment.NewLine}Трассировка до: {ipAddressOrHostName}({ipAddress}){Environment.NewLine}Максимальное число прыжков {maxHops}{Environment.NewLine}");
-                //traceResults.AppendLine(string.Format(, ipAddress, maxHops));
-
-                traceResults.AppendLine();
-                for (int i = 1; i < maxHops + 1; i++)
-                {
-                    stopWatch.Reset();
-                    stopWatch.Start();
-                    PingReply pingReply = pingSender.Send(ipAddress, 5000, new byte[32], pingOptions);
-                    stopWatch.Stop();
-                    traceResults.AppendLine($"{i}\t{stopWatch.ElapsedMilliseconds} ms\t{pingReply.Address}");
-                    //traceResults.AppendLine(string.Format(, , , ));
-
-                    if (pingReply.Status == IPStatus.Success)
-                    {
-                        traceResults.AppendLine();
-                        traceResults.AppendLine($"Трассировки завершена: {DateTime.Now:HH:mm:ss}");
-                        break;
-                    }
-                    pingOptions.Ttl++;
-                }
-            }
-            Cursor = Cursors.Default;
-            return traceResults.ToString();
+            nt tracer = new nt();
+            textBox2.Text = tracer.tracert(textBox3.Text);
         }
 
         private void textBox1_TextChanged(object sender, EventArgs e)
@@ -175,26 +166,62 @@ namespace WindowsFormsApp3
 
         }
 
-        [DllImport("iphlpapi.dll", ExactSpelling = true)]
-        public static extern int SendARP(int DestinationIP, int SourceIP, [Out] byte[] pMacAddr, ref int PhyAddrLen);
-
-        public static string ConvertIpToMAC(IPAddress ip)
-        {
-            byte[] addr = new byte[6];
-            int length = addr.Length;
-
-            SendARP(ip.GetHashCode(), 0, addr, ref length);
-
-            return BitConverter.ToString(addr, 0, 6);
-        }
+        
 
         private void button4_Click(object sender, EventArgs e)
         {
-            //string name = Dns.GetHostEntry(Dns.GetHostName());
+            //StringBuilder ansv = new StringBuilder();
+            ////string name = Dns.GetHostEntry(Dns.GetHostName());
+            //IPHostEntry iP = Dns.GetHostEntry(textBox1.Text);
+            //IPAddress ip = Dns.GetHostByName(textBox1.Text).AddressList[0];
+            ////ansv.AppendLine(ip.ToString());
 
-            IPAddress IP = IPAddress.Parse("192.168.1.104");
+            //nt mac = new nt();
 
-            textBox2.Text=ConvertIpToMAC(IP);
+            ////IPAddress IP = IPAddress.Parse("192.168.1.104");
+            //ansv.AppendLine(textBox1.Text + ": " + ip.ToString() + " - " + mac.ConvertIpToMAC(ip));
+
+
+
+
+            //IPAddressCollection iPAddresses = new IPAddressCollection;
+
+            //foreach (var item in collection)
+            //{
+
+            //}
+            
+            //textBox2.AppendText(Environment.NewLine + ansv.ToString());
+
+        }
+
+        public static IPAddress GetSubnetMask(IPAddress address)
+        {
+            foreach (NetworkInterface adapter in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                foreach (UnicastIPAddressInformation unicastIPAddressInformation in adapter.GetIPProperties().UnicastAddresses)
+                {
+                    if (unicastIPAddressInformation.Address.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        if (address.Equals(unicastIPAddressInformation.Address))
+                        {
+                            return unicastIPAddressInformation.IPv4Mask;
+                        }
+                    }
+                }
+            }
+            throw new ArgumentException($"Can't find subnetmask for IP address '{address}'");
+        }
+
+        private void button5_Click(object sender, EventArgs e)
+        {
+            
+            //textBox2.AppendText(Environment.NewLine + getIpMac());
+        }
+
+        private void numericUpDown2_ValueChanged(object sender, EventArgs e)
+        {
+            period = (int)numericUpDown2.Value;
         }
     }
 }
